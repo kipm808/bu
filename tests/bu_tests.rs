@@ -220,3 +220,53 @@ fn test_multi_index_diff() {
         .stdout(predicate::str::contains("< first"))
         .stdout(predicate::str::contains("> second"));
 }
+
+#[test]
+fn test_burc_excludes_functionality() {
+    let root = tempdir().unwrap();
+
+    // 1. Setup fake HOME directory structure
+    let fake_home = root.path().join("fake_home");
+    let burc_dir = fake_home.join(".burc");
+    fs::create_dir_all(&burc_dir).unwrap();
+
+    // 2. Create the excludes file and ignore "secret.txt"
+    fs::write(burc_dir.join("excludes"), "secret.txt\n# comments should be ignored\n").unwrap();
+
+    // 3. Setup the project
+    let project_path = root.path().join("my_project");
+    let bak_path = root.path().join("bak");
+    fs::create_dir_all(&project_path).unwrap();
+
+    fs::write(project_path.join("visible.txt"), "keep me").unwrap();
+    fs::write(project_path.join("secret.txt"), "hide me").unwrap();
+
+    // 4. Run 'bu save' with overridden HOME
+    let mut cmd = Command::cargo_bin("bu").unwrap();
+    cmd.arg("save")
+        .current_dir(&project_path)
+        .env("HOME", fake_home.to_str().unwrap()); // Override HOME
+
+    cmd.assert().success();
+
+    // 5. Verify the backup contains visible.txt but NOT secret.txt
+    let tar_file = fs::File::open(bak_path.join("000my_project.tar")).unwrap();
+    let mut archive = tar::Archive::new(tar_file);
+    let mut found_secret = false;
+    let mut found_visible = false;
+
+    for entry in archive.entries().unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path().unwrap();
+        if path.to_string_lossy().contains("secret.txt") {
+            found_secret = true;
+        }
+        if path.to_string_lossy().contains("visible.txt") {
+            found_visible = true;
+        }
+    }
+
+    assert!(found_visible, "visible.txt should be in the backup");
+    assert!(!found_secret, "secret.txt should have been excluded by ~/.burc/excludes");
+}
+

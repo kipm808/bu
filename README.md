@@ -29,6 +29,29 @@ Commands:
     * Optionally keep extracted files in `/tmp` for inspection using the `-k` flag.
 * **Metadata Tracking**: Store and view custom notes for each backup.
 
+## Configuration
+
+`bu` looks for an optional exclusion file at `~/.burc/excludes`. If this file exists, `bu` will use the patterns defined within it (one per line). Lines starting with `#` are treated as comments.
+
+### Custom Excludes
+To create a custom exclusion list:
+```bash
+mkdir -p ~/.burc
+echo "[filename]" >> ~/.burc/excludes
+
+Default Excludes
+
+If no configuration file is found, bu defaults to excluding the following common build and metadata directories:
+    bak/
+    tmp/
+    objs/
+    build/
+    .git/
+    target/
+    __pycache__/
+    Any file with the .sif extension.
+```
+
 ## Installation
 
 Ensure you have [Rust and Cargo](https://rustup.rs/) installed.
