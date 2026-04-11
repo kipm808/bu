@@ -1,3 +1,5 @@
+[![Latest Release](https://img.shields.io/github/v/release/kipm808/bu?display_name=tag&sort=semver)](https://github.com/kipm808/bu/releases)
+
 # bu (Backup Utility)
 
 `bu` is a lightweight, CLI-based versioning and backup tool written in Rust. It snapshots your current working directory into a sibling `bak/` folder, allowing you to track history, compare versions, and restore state without the overhead of a full VCS like Git.
