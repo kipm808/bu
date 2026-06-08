@@ -31,13 +31,17 @@ fn main() {
 
     match args.get(1).map(|s| s.as_str()) {
         None | Some("save") | Some("-m") => {
+            if args.get(1) == Some(&"-m".to_string()) && args.len() == 2 {
+                eprintln!("error: -m requires a message");
+                exit(1);
+            }
             if !bak_dir.exists() {
                 fs::create_dir_all(&bak_dir).expect("failed to create bak directory");
             }
             let message = extract_message(&args);
             handle_default_bu(&bak_dir, &tgt_dir_name, &current_dir, &msg_file, message, &excludes);
         }
-        Some("ls") | Some("l") => handle_list(&bak_dir, &tgt_dir_name, &msg_file),
+        Some("ls") | Some("l") | Some("-l") => handle_list(&bak_dir, &tgt_dir_name, &msg_file),
         Some("trim") => handle_purge(&bak_dir, &tgt_dir_name, &msg_file),
         Some("load") => {
             let provided_idx = args.get(2).and_then(|s| s.parse::<u32>().ok());
@@ -146,7 +150,7 @@ fn print_usage(bin_name: &str) {
     println!("\nCommands:");
     println!("  save [-m MSG]       Backup current directory to ../bak/ (default)");
     println!("  -m MSG...           Shorthand for save with multi-word message");
-    println!("  ls                  List backups and messages");
+    println!("  ls, l, -l           List backups and messages");
     println!("  load [idx]          Restore backup (defaults to latest if idx omitted)");
     println!("  find <pat> [file]   Search for pattern in historical files");
     println!("  diff [i1] [i2] [-k] Diff latest vs current, or archive vs archive");

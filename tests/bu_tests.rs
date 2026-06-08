@@ -270,3 +270,39 @@ fn test_burc_excludes_functionality() {
     assert!(!found_secret, "secret.txt should have been excluded by ~/.burc/excludes");
 }
 
+#[test]
+fn test_l_flag_alias() {
+    let root = tempdir().unwrap();
+    let proj = root.path().join("list_proj");
+    fs::create_dir_all(&proj).unwrap();
+
+    fs::write(proj.join("file.txt"), "data").unwrap();
+    Command::cargo_bin("bu")
+        .unwrap()
+        .arg("save")
+        .current_dir(&proj)
+        .assert()
+        .success();
+
+    let mut cmd = Command::cargo_bin("bu").unwrap();
+    cmd.arg("-l").current_dir(&proj);
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("000list_proj.tar"));
+}
+
+#[test]
+fn test_m_flag_without_message_fails() {
+    let root = tempdir().unwrap();
+    let proj = root.path().join("error_proj");
+    fs::create_dir_all(&proj).unwrap();
+
+    let mut cmd = Command::cargo_bin("bu").unwrap();
+    cmd.arg("-m").current_dir(&proj);
+
+    cmd.assert()
+        .failure()
+        .stderr(predicate::str::contains("error: -m requires a message"));
+}
+
