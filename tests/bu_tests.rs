@@ -87,6 +87,39 @@ fn test_diff_functionality() {
 }
 
 #[test]
+fn test_diff_quiet_flag() {
+    let root = tempdir().unwrap();
+    let project_path = root.path().join("quiet_app");
+    fs::create_dir_all(&project_path).unwrap();
+
+    let file_path = project_path.join("code.rs");
+    fs::write(&file_path, "fn main() { println!(\"v1\"); }").unwrap();
+
+    // 1. Initial backup
+    Command::cargo_bin("bu")
+        .unwrap()
+        .arg("save")
+        .current_dir(&project_path)
+        .assert()
+        .success();
+
+    // 2. Modify file
+    fs::write(&file_path, "fn main() { println!(\"v2\"); }").unwrap();
+
+    // 3. Run diff with -q flag
+    let mut cmd_diff = Command::cargo_bin("bu").unwrap();
+    cmd_diff.arg("diff").arg("-q").current_dir(&project_path);
+
+    // With -q, diff should show "Files ... differ" but not the actual diff lines
+    cmd_diff
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("differ"))
+        .stdout(predicate::str::contains("< fn main()").not())
+        .stdout(predicate::str::contains("> fn main()").not());
+}
+
+#[test]
 fn test_load_functionality() {
     let root = tempdir().unwrap();
     let project_path = root.path().join("restore_me");

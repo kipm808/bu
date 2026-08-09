@@ -67,16 +67,16 @@ fn main() {
 
             match (idx1, idx2) {
                 (Some(i1), Some(i2)) => {
-                    let (keep, file) = parse_extra_args(&args, 4);
-                    run_archive_diff(i1, i2, &bak_dir, &tgt_dir_name, keep, file);
+                    let (keep, quiet, file) = parse_extra_args(&args, 4);
+                    run_archive_diff(i1, i2, &bak_dir, &tgt_dir_name, keep, quiet, file);
                 }
                 (Some(i1), None) => {
-                    let (keep, file) = parse_extra_args(&args, 3);
-                    run_diff(i1, &bak_dir, &tgt_dir_name, &current_dir, keep, file);
+                    let (keep, quiet, file) = parse_extra_args(&args, 3);
+                    run_diff(i1, &bak_dir, &tgt_dir_name, &current_dir, keep, quiet, file);
                 }
                 _ => {
-                    let (keep, file) = parse_extra_args(&args, 2);
-                    handle_diff(&bak_dir, &tgt_dir_name, &current_dir, keep, file);
+                    let (keep, quiet, file) = parse_extra_args(&args, 2);
+                    handle_diff(&bak_dir, &tgt_dir_name, &current_dir, keep, quiet, file);
                 }
             }
         }
@@ -131,17 +131,20 @@ fn extract_message(args: &[String]) -> Option<String> {
     }
 }
 
-fn parse_extra_args(args: &[String], start_idx: usize) -> (bool, Option<String>) {
+fn parse_extra_args(args: &[String], start_idx: usize) -> (bool, bool, Option<String>) {
     let mut keep = false;
+    let mut quiet = false;
     let mut file = None;
     for arg in args.iter().skip(start_idx) {
         if arg == "-k" || arg == "keep" || arg == "--keep" {
             keep = true;
+        } else if arg == "-q" || arg == "quiet" || arg == "--quiet" {
+            quiet = true;
         } else if file.is_none() && !arg.starts_with('-') {
             file = Some(arg.clone());
         }
     }
-    (keep, file)
+    (keep, quiet, file)
 }
 
 fn print_usage(bin_name: &str) {
@@ -153,8 +156,9 @@ fn print_usage(bin_name: &str) {
     println!("  ls, l, -l           List backups and messages");
     println!("  load [idx]          Restore backup (defaults to latest if idx omitted)");
     println!("  find <pat> [file]   Search for pattern in historical files");
-    println!("  diff [i1] [i2] [-k] Diff latest vs current, or archive vs archive");
+    println!("  diff [i1] [i2] [-k] [-q] Diff latest vs current, or archive vs archive");
     println!("                      (-k: keep extracted files in /tmp/)");
+    println!("                      (-q: show only which files differ)");
     println!("  trim                Keep only latest backup and reset to 000");
 }
 
@@ -320,26 +324,29 @@ fn handle_search(bak_dir: &Path, tgt_name: &str, pattern: &str, file_filter: Opt
     }
 }
 
-fn handle_diff(bak_dir: &Path, tgt_name: &str, cur: &Path, keep: bool, file: Option<String>) {
+fn handle_diff(bak_dir: &Path, tgt_name: &str, cur: &Path, keep: bool, quiet: bool, file: Option<String>) {
     if let Some(idx) = get_latest_idx(bak_dir, tgt_name) {
-        run_diff(idx, bak_dir, tgt_name, cur, keep, file);
+        run_diff(idx, bak_dir, tgt_name, cur, keep, quiet, file);
     }
 }
 
-fn run_diff(idx: u32, bak_dir: &Path, tgt_name: &str, current_dir: &Path, keep: bool, file: Option<String>) {
+fn run_diff(idx: u32, bak_dir: &Path, tgt_name: &str, current_dir: &Path, keep: bool, quiet: bool, file: Option<String>) {
     let tar_path = bak_dir.join(format!("{:03}{}.tar", idx, tgt_name));
     let tmp_parent = tempfile::tempdir().unwrap();
     let extracted_dir = tmp_parent.path().join(tgt_name);
     Archive::new(fs::File::open(&tar_path).unwrap()).unpack(tmp_parent.path()).unwrap();
-    
+
     let mut diff_cmd = Command::new("diff");
+    if quiet {
+        diff_cmd.arg("-q");
+    }
     if let Some(filename) = file {
         diff_cmd.arg(extracted_dir.join(&filename)).arg(current_dir.join(&filename));
     } else {
         diff_cmd.arg("-r").arg(&extracted_dir).arg(current_dir);
     }
     let _ = diff_cmd.status();
-    
+
     if keep {
         let dest = PathBuf::from("/tmp").join(tgt_name);
         if dest.exists() { let _ = fs::remove_dir_all(&dest); }
@@ -348,15 +355,18 @@ fn run_diff(idx: u32, bak_dir: &Path, tgt_name: &str, current_dir: &Path, keep: 
     }
 }
 
-fn run_archive_diff(idx1: u32, idx2: u32, bak_dir: &Path, tgt_name: &str, keep: bool, file: Option<String>) {
+fn run_archive_diff(idx1: u32, idx2: u32, bak_dir: &Path, tgt_name: &str, keep: bool, quiet: bool, file: Option<String>) {
     let tmp1 = tempfile::tempdir().unwrap();
     let tmp2 = tempfile::tempdir().unwrap();
     Archive::new(fs::File::open(bak_dir.join(format!("{:03}{}.tar", idx1, tgt_name))).unwrap()).unpack(tmp1.path()).unwrap();
     Archive::new(fs::File::open(bak_dir.join(format!("{:03}{}.tar", idx2, tgt_name))).unwrap()).unpack(tmp2.path()).unwrap();
-    
+
     let dir1 = tmp1.path().join(tgt_name);
     let dir2 = tmp2.path().join(tgt_name);
     let mut diff_cmd = Command::new("diff");
+    if quiet {
+        diff_cmd.arg("-q");
+    }
     if let Some(filename) = file {
         diff_cmd.arg(dir1.join(&filename)).arg(dir2.join(&filename));
     } else {
