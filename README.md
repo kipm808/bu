@@ -13,8 +13,12 @@ Commands:
   ls, l, -l           List backups and messages
   load [idx]          Restore backup (defaults to latest if idx omitted)
   find <pat> [file]   Search for pattern in historical files
-  diff [i1] [i2] [-k] Diff latest vs current, or archive vs archive
+  -c, --cat [idx]     Write archive contents to stdout (default latest)
+  --rename <old> <new> Rename ../bak/*old archives to *new (rewrites inner paths)
+  s, -s, --status     Show which files differ (alias for diff -q)
+  diff [i1] [i2] [-k] [-q] Diff latest vs current, or archive vs archive
                       (-k: keep extracted files in /tmp/)
+                      (-q: show only which files differ)
   trim                Keep only latest backup and reset to 000
 ```
 
@@ -26,7 +30,10 @@ Commands:
 * **Diffing Suite**:
     * Compare current directory vs. latest backup.
     * Compare specific historical versions against each other.
+    * Get a quick summary of which files changed with `s`, `-s`, or `--status` (alias for `diff -q`).
     * Optionally keep extracted files in `/tmp` for inspection using the `-k` flag.
+* **Archive Preview**: Dump the contents of any backup to stdout with `--cat`, skipping binary files.
+* **Renaming**: Rename a project's archives with `--rename`, rewriting the paths stored inside each tarball.
 * **Metadata Tracking**: Store and view custom notes for each backup.
 
 ## Configuration

@@ -339,3 +339,314 @@ fn test_m_flag_without_message_fails() {
         .stderr(predicate::str::contains("error: -m requires a message"));
 }
 
+#[test]
+fn test_cat_functionality() {
+    let root = tempdir().unwrap();
+    let proj = root.path().join("cat_proj");
+    fs::create_dir_all(&proj).unwrap();
+
+    fs::write(proj.join("hello.txt"), "hello world").unwrap();
+    Command::cargo_bin("bu")
+        .unwrap()
+        .arg("save")
+        .current_dir(&proj)
+        .assert()
+        .success();
+
+    let mut cmd = Command::cargo_bin("bu").unwrap();
+    cmd.arg("--cat").current_dir(&proj);
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "# cat_proj/hello.txt ===================",
+        ))
+        .stdout(predicate::str::contains("hello world"));
+}
+
+#[test]
+fn test_cat_c_alias() {
+    let root = tempdir().unwrap();
+    let proj = root.path().join("cat_alias");
+    fs::create_dir_all(&proj).unwrap();
+
+    fs::write(proj.join("note.txt"), "aliased content").unwrap();
+    Command::cargo_bin("bu")
+        .unwrap()
+        .arg("save")
+        .current_dir(&proj)
+        .assert()
+        .success();
+
+    let mut cmd = Command::cargo_bin("bu").unwrap();
+    cmd.arg("-c").current_dir(&proj);
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("aliased content"));
+}
+
+#[test]
+fn test_cat_specific_index() {
+    let root = tempdir().unwrap();
+    let proj = root.path().join("cat_idx");
+    fs::create_dir_all(&proj).unwrap();
+
+    fs::write(proj.join("v.txt"), "first version").unwrap();
+    Command::cargo_bin("bu")
+        .unwrap()
+        .arg("save")
+        .current_dir(&proj)
+        .assert()
+        .success();
+
+    fs::write(proj.join("v.txt"), "second version").unwrap();
+    Command::cargo_bin("bu")
+        .unwrap()
+        .arg("save")
+        .current_dir(&proj)
+        .assert()
+        .success();
+
+    // --cat 0 should show the first version, not the second
+    let mut cmd = Command::cargo_bin("bu").unwrap();
+    cmd.arg("--cat").arg("0").current_dir(&proj);
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("first version"))
+        .stdout(predicate::str::contains("second version").not());
+}
+
+#[test]
+fn test_cat_skips_binary() {
+    let root = tempdir().unwrap();
+    let proj = root.path().join("cat_bin");
+    fs::create_dir_all(&proj).unwrap();
+
+    // A file containing a NUL byte is treated as binary
+    fs::write(proj.join("data.bin"), [0u8, 1, 2, 3, 4]).unwrap();
+    Command::cargo_bin("bu")
+        .unwrap()
+        .arg("save")
+        .current_dir(&proj)
+        .assert()
+        .success();
+
+    let mut cmd = Command::cargo_bin("bu").unwrap();
+    cmd.arg("--cat").current_dir(&proj);
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "# cat_bin/data.bin ===================",
+        ))
+        .stdout(predicate::str::contains("[binary file, 5 bytes, skipped]"));
+}
+
+#[test]
+fn test_exclude_target_not_targets() {
+    let root = tempdir().unwrap();
+    let proj = root.path().join("seg_proj");
+    let bak = root.path().join("bak");
+    fs::create_dir_all(proj.join("target")).unwrap();
+    fs::create_dir_all(proj.join("targets")).unwrap();
+
+    fs::write(proj.join("target").join("junk.txt"), "build artifact").unwrap();
+    fs::write(proj.join("targets").join("keep.txt"), "important").unwrap();
+
+    Command::cargo_bin("bu")
+        .unwrap()
+        .arg("save")
+        .current_dir(&proj)
+        .assert()
+        .success();
+
+    let tar_file = fs::File::open(bak.join("000seg_proj.tar")).unwrap();
+    let mut archive = tar::Archive::new(tar_file);
+    let mut found_target = false;
+    let mut found_targets = false;
+
+    for entry in archive.entries().unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path().unwrap().to_string_lossy().to_string();
+        if path.contains("/target/junk.txt") {
+            found_target = true;
+        }
+        if path.contains("/targets/keep.txt") {
+            found_targets = true;
+        }
+    }
+
+    assert!(!found_target, "target/ should be excluded");
+    assert!(found_targets, "targets/ should NOT be excluded by a prefix match");
+}
+
+#[test]
+fn test_rename_functionality() {
+    let root = tempdir().unwrap();
+    let proj = root.path().join("bu");
+    let bak = root.path().join("bak");
+    fs::create_dir_all(proj.join("src")).unwrap();
+    fs::write(proj.join("src").join("main.rs"), "fn main() {}").unwrap();
+
+    // Two backups: 000bu.tar, 001bu.tar
+    Command::cargo_bin("bu").unwrap().arg("save").current_dir(&proj).assert().success();
+    fs::write(proj.join("src").join("main.rs"), "fn main() { }").unwrap();
+    Command::cargo_bin("bu").unwrap().arg("save").current_dir(&proj).assert().success();
+
+    Command::cargo_bin("bu")
+        .unwrap()
+        .arg("--rename")
+        .arg("bu")
+        .arg("bu2")
+        .current_dir(&proj)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("000bu.tar -> 000bu2.tar"))
+        .stdout(predicate::str::contains("001bu.tar -> 001bu2.tar"));
+
+    // New names exist, old names gone
+    assert!(bak.join("000bu2.tar").exists());
+    assert!(bak.join("001bu2.tar").exists());
+    assert!(!bak.join("000bu.tar").exists());
+    assert!(!bak.join("001bu.tar").exists());
+
+    // Inner paths rewritten: every entry starts with bu2/, none with bu/
+    let tar_file = fs::File::open(bak.join("000bu2.tar")).unwrap();
+    let mut archive = tar::Archive::new(tar_file);
+    let mut saw_main = false;
+    for entry in archive.entries().unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path().unwrap().to_string_lossy().to_string();
+        assert!(
+            path == "bu2" || path.starts_with("bu2/"),
+            "unexpected inner path: {}",
+            path
+        );
+        if path == "bu2/src/main.rs" {
+            saw_main = true;
+        }
+    }
+    assert!(saw_main, "expected rewritten bu2/src/main.rs inside the archive");
+}
+
+#[test]
+fn test_rename_moves_message_file() {
+    let root = tempdir().unwrap();
+    let proj = root.path().join("msgproj");
+    let bak = root.path().join("bak");
+    fs::create_dir_all(&proj).unwrap();
+    fs::write(proj.join("f.txt"), "data").unwrap();
+
+    Command::cargo_bin("bu")
+        .unwrap()
+        .arg("-m")
+        .arg("a note")
+        .current_dir(&proj)
+        .assert()
+        .success();
+
+    Command::cargo_bin("bu")
+        .unwrap()
+        .arg("--rename")
+        .arg("msgproj")
+        .arg("renamed")
+        .current_dir(&proj)
+        .assert()
+        .success();
+
+    assert!(!bak.join("msgproj.txt").exists());
+    let msg = fs::read_to_string(bak.join("renamed.txt")).unwrap();
+    assert!(msg.contains("000: a note"));
+}
+
+#[test]
+fn test_rename_fails_if_new_exists() {
+    let root = tempdir().unwrap();
+    let proj = root.path().join("orig");
+    let bak = root.path().join("bak");
+    fs::create_dir_all(&proj).unwrap();
+    fs::write(proj.join("f.txt"), "data").unwrap();
+
+    Command::cargo_bin("bu").unwrap().arg("save").current_dir(&proj).assert().success();
+
+    // Pre-create a colliding 000dest.tar
+    fs::write(bak.join("000dest.tar"), b"not a real tar").unwrap();
+
+    Command::cargo_bin("bu")
+        .unwrap()
+        .arg("--rename")
+        .arg("orig")
+        .arg("dest")
+        .current_dir(&proj)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("already exists"));
+
+    // Original archive is untouched
+    assert!(bak.join("000orig.tar").exists());
+}
+
+#[test]
+fn test_rename_no_backups_fails() {
+    let root = tempdir().unwrap();
+    let proj = root.path().join("empty");
+    fs::create_dir_all(&proj).unwrap();
+    // Create the bak dir so it exists but has no matching archives
+    fs::create_dir_all(root.path().join("bak")).unwrap();
+
+    Command::cargo_bin("bu")
+        .unwrap()
+        .arg("--rename")
+        .arg("nothere")
+        .arg("whatever")
+        .current_dir(&proj)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no backups found"));
+}
+
+fn status_alias_shows_only_names(alias: &str) {
+    let root = tempdir().unwrap();
+    let proj = root.path().join("status_proj");
+    fs::create_dir_all(&proj).unwrap();
+
+    let file_path = proj.join("code.rs");
+    fs::write(&file_path, "fn main() { println!(\"v1\"); }").unwrap();
+
+    Command::cargo_bin("bu")
+        .unwrap()
+        .arg("save")
+        .current_dir(&proj)
+        .assert()
+        .success();
+
+    fs::write(&file_path, "fn main() { println!(\"v2\"); }").unwrap();
+
+    Command::cargo_bin("bu")
+        .unwrap()
+        .arg(alias)
+        .current_dir(&proj)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("differ"))
+        .stdout(predicate::str::contains("< fn main()").not())
+        .stdout(predicate::str::contains("> fn main()").not());
+}
+
+#[test]
+fn test_status_long_flag() {
+    status_alias_shows_only_names("--status");
+}
+
+#[test]
+fn test_status_short_flag() {
+    status_alias_shows_only_names("-s");
+}
+
+#[test]
+fn test_status_bare_word() {
+    status_alias_shows_only_names("s");
+}
+

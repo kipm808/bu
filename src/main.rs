@@ -2,7 +2,7 @@ use chrono::{DateTime, Local};
 use std::collections::HashMap;
 use std::env;
 use std::fs::{self};
-use std::io::{BufRead, BufReader, Read};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, exit};
 use tar::{Archive, Builder};
@@ -53,12 +53,34 @@ fn main() {
                 exit(1);
             }
         }
+        Some("--cat") | Some("-c") => {
+            let provided_idx = args.get(2).and_then(|s| s.parse::<u32>().ok());
+            let target_idx = provided_idx.or_else(|| get_latest_idx(&bak_dir, &tgt_dir_name));
+            if let Some(idx) = target_idx {
+                handle_cat(idx, &bak_dir, &tgt_dir_name);
+            } else {
+                eprintln!("error: no backups found");
+                exit(1);
+            }
+        }
         Some("find") => {
             if let Some(pattern) = args.get(2) {
                 let file_filter = args.get(3).cloned();
                 handle_search(&bak_dir, &tgt_dir_name, pattern, file_filter);
             } else {
                 eprintln!("usage: bu find <pattern> [file_filter]");
+            }
+        }
+        Some("--status") | Some("-s") | Some("s") => {
+            handle_diff(&bak_dir, &tgt_dir_name, &current_dir, false, true, None);
+        }
+        Some("--rename") => {
+            match (args.get(2), args.get(3)) {
+                (Some(old), Some(new)) => handle_rename(old, new, &bak_dir),
+                _ => {
+                    eprintln!("usage: bu --rename <old> <new>");
+                    exit(1);
+                }
             }
         }
         Some("diff") => {
@@ -156,6 +178,9 @@ fn print_usage(bin_name: &str) {
     println!("  ls, l, -l           List backups and messages");
     println!("  load [idx]          Restore backup (defaults to latest if idx omitted)");
     println!("  find <pat> [file]   Search for pattern in historical files");
+    println!("  -c, --cat [idx]     Write archive contents to stdout (default latest)");
+    println!("  --rename <old> <new> Rename ../bak/*old archives to *new (rewrites inner paths)");
+    println!("  s, -s, --status     Show which files differ (alias for diff -q)");
     println!("  diff [i1] [i2] [-k] [-q] Diff latest vs current, or archive vs archive");
     println!("                      (-k: keep extracted files in /tmp/)");
     println!("                      (-q: show only which files differ)");
@@ -324,6 +349,97 @@ fn handle_search(bak_dir: &Path, tgt_name: &str, pattern: &str, file_filter: Opt
     }
 }
 
+fn handle_cat(idx: u32, bak_dir: &Path, tgt_name: &str) {
+    let tar_path = bak_dir.join(format!("{:03}{}.tar", idx, tgt_name));
+    if !tar_path.exists() {
+        eprintln!("error: backup {:03} not found", idx);
+        exit(1);
+    }
+    let mut archive = Archive::new(fs::File::open(&tar_path).unwrap());
+    let entries = archive.entries().expect("failed to read archive entries");
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+    for mut f in entries.flatten() {
+        if f.header().entry_type().is_dir() { continue; }
+        let path = f.path().unwrap().to_path_buf();
+        writeln!(out, "# {} ===================", path.display()).ok();
+        let mut content = Vec::new();
+        if f.read_to_end(&mut content).is_ok() {
+            if content.contains(&0) {
+                writeln!(out, "[binary file, {} bytes, skipped]", content.len()).ok();
+            } else {
+                out.write_all(&content).ok();
+            }
+        }
+        writeln!(out).ok();
+    }
+}
+
+fn handle_rename(old: &str, new: &str, bak_dir: &Path) {
+    let new_zero = bak_dir.join(format!("000{}.tar", new));
+    if new_zero.exists() {
+        eprintln!("error: {} already exists", new_zero.display());
+        exit(1);
+    }
+
+    let mut idx = 0;
+    let mut count = 0;
+    loop {
+        let src = bak_dir.join(format!("{:03}{}.tar", idx, old));
+        if !src.exists() {
+            break;
+        }
+        let dst = bak_dir.join(format!("{:03}{}.tar", idx, new));
+        rewrite_archive(&src, &dst, old, new);
+        fs::remove_file(&src).ok();
+        println!("{:03}{}.tar -> {:03}{}.tar", idx, old, idx, new);
+        count += 1;
+        idx += 1;
+    }
+
+    if count == 0 {
+        eprintln!("error: no backups found for '{}'", old);
+        exit(1);
+    }
+
+    let old_msg = bak_dir.join(format!("{}.txt", old));
+    if old_msg.exists() {
+        let new_msg = bak_dir.join(format!("{}.txt", new));
+        let _ = fs::rename(&old_msg, &new_msg);
+    }
+
+    println!("Renamed {} archive(s): {} -> {}", count, old, new);
+}
+
+fn rewrite_archive(src: &Path, dst: &Path, old: &str, new: &str) {
+    let mut archive = Archive::new(fs::File::open(src).expect("failed to open archive"));
+    let mut builder = Builder::new(fs::File::create(dst).expect("failed to create archive"));
+    for entry in archive.entries().expect("failed to read archive entries") {
+        let mut entry = entry.expect("failed to read entry");
+        let path = entry.path().expect("failed to read entry path").to_path_buf();
+        let new_path = rewrite_path(&path, old, new);
+        let mut header = entry.header().clone();
+        builder
+            .append_data(&mut header, &new_path, &mut entry)
+            .expect("failed to append entry");
+    }
+    builder.finish().expect("failed to finalize archive");
+}
+
+fn rewrite_path(path: &Path, old: &str, new: &str) -> PathBuf {
+    let mut comps = path.components();
+    let mut result = PathBuf::new();
+    match comps.next() {
+        Some(first) if first.as_os_str() == old => result.push(new),
+        Some(first) => result.push(first.as_os_str()),
+        None => {}
+    }
+    for c in comps {
+        result.push(c.as_os_str());
+    }
+    result
+}
+
 fn handle_diff(bak_dir: &Path, tgt_name: &str, cur: &Path, keep: bool, quiet: bool, file: Option<String>) {
     if let Some(idx) = get_latest_idx(bak_dir, tgt_name) {
         run_diff(idx, bak_dir, tgt_name, cur, keep, quiet, file);
@@ -391,9 +507,10 @@ fn format_size(bytes: u64) -> String {
 }
 
 fn should_exclude(path: &Path, excludes: &[String]) -> bool {
-    let path_str = path.to_str().unwrap_or("");
-    excludes.iter().any(|ex| path_str.contains(ex))
-        || path.extension().is_some_and(|ext| ext == "sif")
+    path.components().any(|c| {
+        let segment = c.as_os_str().to_string_lossy();
+        excludes.iter().any(|ex| segment == ex.as_str())
+    }) || path.extension().is_some_and(|ext| ext == "sif")
 }
 
 fn get_latest_idx(bak_dir: &Path, tgt_name: &str) -> Option<u32> {

@@ -1,9 +1,0 @@
-you're running in /mnt/share/bu on an NFS client
-I have to build, deploy, and install things on the NFS server, not you.
-if we need to install any libraris I have to do it on the NFS server.
-ask permission on all edits so I can understand what's changing
-never add BLOCK CAPITALS or graphics characters anywhere
-
-add the 'diff -q'  option to tests/bu_test.rs
-
-
