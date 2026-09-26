@@ -16,9 +16,11 @@ Commands:
   -c, --cat [idx]     Write archive contents to stdout (default latest)
   --rename <old> <new> Rename ../bak/*old archives to *new (rewrites inner paths)
   s, -s, --status     Show which files differ (alias for diff -q)
-  diff [i1] [i2] [-k] [-q] Diff latest vs current, or archive vs archive
+  diff [i1] [i2] ["file1, file2"] [-k] [-q]
+                      Diff latest vs current, or archive vs archive
                       (-k: keep extracted files in /tmp/)
                       (-q: show only which files differ)
+                      (quoted file list: only diff those files)
   trim                Keep only latest backup and reset to 000
 ```
 
@@ -30,6 +32,7 @@ Commands:
 * **Diffing Suite**:
     * Compare current directory vs. latest backup.
     * Compare specific historical versions against each other.
+    * Limit a diff to specific files with a quoted, comma-separated list, e.g. `bu diff "src/main.rs, README.md"`.
     * Get a quick summary of which files changed with `s`, `-s`, or `--status` (alias for `diff -q`).
     * Optionally keep extracted files in `/tmp` for inspection using the `-k` flag.
 * **Archive Preview**: Dump the contents of any backup to stdout with `--cat`, skipping binary files.

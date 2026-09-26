@@ -650,3 +650,91 @@ fn test_status_bare_word() {
     status_alias_shows_only_names("s");
 }
 
+#[test]
+fn test_diff_file_list() {
+    let root = tempdir().unwrap();
+    let proj = root.path().join("dl_proj");
+    fs::create_dir_all(&proj).unwrap();
+    fs::write(proj.join("a.txt"), "a1").unwrap();
+    fs::write(proj.join("b.txt"), "b1").unwrap();
+    fs::write(proj.join("c.txt"), "c1").unwrap();
+
+    Command::cargo_bin("bu").unwrap().arg("save").current_dir(&proj).assert().success();
+
+    fs::write(proj.join("a.txt"), "a2").unwrap();
+    fs::write(proj.join("b.txt"), "b2").unwrap();
+    fs::write(proj.join("c.txt"), "c2").unwrap();
+
+    // Only a.txt and b.txt should be diffed, not c.txt
+    Command::cargo_bin("bu")
+        .unwrap()
+        .arg("diff")
+        .arg("a.txt, b.txt")
+        .current_dir(&proj)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("< a1"))
+        .stdout(predicate::str::contains("> a2"))
+        .stdout(predicate::str::contains("< b1"))
+        .stdout(predicate::str::contains("< c1").not())
+        .stdout(predicate::str::contains("> c2").not());
+}
+
+#[test]
+fn test_diff_file_list_quiet() {
+    let root = tempdir().unwrap();
+    let proj = root.path().join("dlq_proj");
+    fs::create_dir_all(&proj).unwrap();
+    fs::write(proj.join("a.txt"), "a1").unwrap();
+    fs::write(proj.join("b.txt"), "b1").unwrap();
+
+    Command::cargo_bin("bu").unwrap().arg("save").current_dir(&proj).assert().success();
+
+    fs::write(proj.join("a.txt"), "a2").unwrap();
+    fs::write(proj.join("b.txt"), "b2").unwrap();
+
+    // Only a.txt is listed; -q reports it differs and does not mention b.txt or line content
+    Command::cargo_bin("bu")
+        .unwrap()
+        .arg("diff")
+        .arg("a.txt")
+        .arg("-q")
+        .current_dir(&proj)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("a.txt"))
+        .stdout(predicate::str::contains("differ"))
+        .stdout(predicate::str::contains("b.txt").not())
+        .stdout(predicate::str::contains("< a1").not());
+}
+
+#[test]
+fn test_archive_diff_file_list() {
+    let root = tempdir().unwrap();
+    let proj = root.path().join("adl_proj");
+    fs::create_dir_all(&proj).unwrap();
+    fs::write(proj.join("a.txt"), "a1").unwrap();
+    fs::write(proj.join("b.txt"), "b1").unwrap();
+
+    Command::cargo_bin("bu").unwrap().arg("save").current_dir(&proj).assert().success();
+
+    fs::write(proj.join("a.txt"), "a2").unwrap();
+    fs::write(proj.join("b.txt"), "b2").unwrap();
+    Command::cargo_bin("bu").unwrap().arg("save").current_dir(&proj).assert().success();
+
+    // Archive 0 vs 1, limited to a.txt
+    Command::cargo_bin("bu")
+        .unwrap()
+        .arg("diff")
+        .arg("0")
+        .arg("1")
+        .arg("a.txt")
+        .current_dir(&proj)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("< a1"))
+        .stdout(predicate::str::contains("> a2"))
+        .stdout(predicate::str::contains("b1").not())
+        .stdout(predicate::str::contains("b2").not());
+}
+

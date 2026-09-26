@@ -72,7 +72,7 @@ fn main() {
             }
         }
         Some("--status") | Some("-s") | Some("s") => {
-            handle_diff(&bak_dir, &tgt_dir_name, &current_dir, false, true, None);
+            handle_diff(&bak_dir, &tgt_dir_name, &current_dir, false, true, Vec::new());
         }
         Some("--rename") => {
             match (args.get(2), args.get(3)) {
@@ -89,16 +89,16 @@ fn main() {
 
             match (idx1, idx2) {
                 (Some(i1), Some(i2)) => {
-                    let (keep, quiet, file) = parse_extra_args(&args, 4);
-                    run_archive_diff(i1, i2, &bak_dir, &tgt_dir_name, keep, quiet, file);
+                    let (keep, quiet, files) = parse_extra_args(&args, 4);
+                    run_archive_diff(i1, i2, &bak_dir, &tgt_dir_name, keep, quiet, files);
                 }
                 (Some(i1), None) => {
-                    let (keep, quiet, file) = parse_extra_args(&args, 3);
-                    run_diff(i1, &bak_dir, &tgt_dir_name, &current_dir, keep, quiet, file);
+                    let (keep, quiet, files) = parse_extra_args(&args, 3);
+                    run_diff(i1, &bak_dir, &tgt_dir_name, &current_dir, keep, quiet, files);
                 }
                 _ => {
-                    let (keep, quiet, file) = parse_extra_args(&args, 2);
-                    handle_diff(&bak_dir, &tgt_dir_name, &current_dir, keep, quiet, file);
+                    let (keep, quiet, files) = parse_extra_args(&args, 2);
+                    handle_diff(&bak_dir, &tgt_dir_name, &current_dir, keep, quiet, files);
                 }
             }
         }
@@ -153,20 +153,25 @@ fn extract_message(args: &[String]) -> Option<String> {
     }
 }
 
-fn parse_extra_args(args: &[String], start_idx: usize) -> (bool, bool, Option<String>) {
+fn parse_extra_args(args: &[String], start_idx: usize) -> (bool, bool, Vec<String>) {
     let mut keep = false;
     let mut quiet = false;
-    let mut file = None;
+    let mut files = Vec::new();
     for arg in args.iter().skip(start_idx) {
         if arg == "-k" || arg == "keep" || arg == "--keep" {
             keep = true;
         } else if arg == "-q" || arg == "quiet" || arg == "--quiet" {
             quiet = true;
-        } else if file.is_none() && !arg.starts_with('-') {
-            file = Some(arg.clone());
+        } else if !arg.starts_with('-') {
+            for part in arg.split(',') {
+                let trimmed = part.trim();
+                if !trimmed.is_empty() {
+                    files.push(trimmed.to_string());
+                }
+            }
         }
     }
-    (keep, quiet, file)
+    (keep, quiet, files)
 }
 
 fn print_usage(bin_name: &str) {
@@ -181,9 +186,11 @@ fn print_usage(bin_name: &str) {
     println!("  -c, --cat [idx]     Write archive contents to stdout (default latest)");
     println!("  --rename <old> <new> Rename ../bak/*old archives to *new (rewrites inner paths)");
     println!("  s, -s, --status     Show which files differ (alias for diff -q)");
-    println!("  diff [i1] [i2] [-k] [-q] Diff latest vs current, or archive vs archive");
+    println!("  diff [i1] [i2] [\"file1, file2\"] [-k] [-q]");
+    println!("                      Diff latest vs current, or archive vs archive");
     println!("                      (-k: keep extracted files in /tmp/)");
     println!("                      (-q: show only which files differ)");
+    println!("                      (quoted file list: only diff those files)");
     println!("  trim                Keep only latest backup and reset to 000");
 }
 
@@ -440,28 +447,37 @@ fn rewrite_path(path: &Path, old: &str, new: &str) -> PathBuf {
     result
 }
 
-fn handle_diff(bak_dir: &Path, tgt_name: &str, cur: &Path, keep: bool, quiet: bool, file: Option<String>) {
+fn handle_diff(bak_dir: &Path, tgt_name: &str, cur: &Path, keep: bool, quiet: bool, files: Vec<String>) {
     if let Some(idx) = get_latest_idx(bak_dir, tgt_name) {
-        run_diff(idx, bak_dir, tgt_name, cur, keep, quiet, file);
+        run_diff(idx, bak_dir, tgt_name, cur, keep, quiet, files);
     }
 }
 
-fn run_diff(idx: u32, bak_dir: &Path, tgt_name: &str, current_dir: &Path, keep: bool, quiet: bool, file: Option<String>) {
+fn run_diff_cmd(quiet: bool, recursive: bool, a: &Path, b: &Path) {
+    let mut cmd = Command::new("diff");
+    if quiet {
+        cmd.arg("-q");
+    }
+    if recursive {
+        cmd.arg("-r");
+    }
+    cmd.arg(a).arg(b);
+    let _ = cmd.status();
+}
+
+fn run_diff(idx: u32, bak_dir: &Path, tgt_name: &str, current_dir: &Path, keep: bool, quiet: bool, files: Vec<String>) {
     let tar_path = bak_dir.join(format!("{:03}{}.tar", idx, tgt_name));
     let tmp_parent = tempfile::tempdir().unwrap();
     let extracted_dir = tmp_parent.path().join(tgt_name);
     Archive::new(fs::File::open(&tar_path).unwrap()).unpack(tmp_parent.path()).unwrap();
 
-    let mut diff_cmd = Command::new("diff");
-    if quiet {
-        diff_cmd.arg("-q");
-    }
-    if let Some(filename) = file {
-        diff_cmd.arg(extracted_dir.join(&filename)).arg(current_dir.join(&filename));
+    if files.is_empty() {
+        run_diff_cmd(quiet, true, &extracted_dir, current_dir);
     } else {
-        diff_cmd.arg("-r").arg(&extracted_dir).arg(current_dir);
+        for filename in &files {
+            run_diff_cmd(quiet, false, &extracted_dir.join(filename), &current_dir.join(filename));
+        }
     }
-    let _ = diff_cmd.status();
 
     if keep {
         let dest = PathBuf::from("/tmp").join(tgt_name);
@@ -471,7 +487,7 @@ fn run_diff(idx: u32, bak_dir: &Path, tgt_name: &str, current_dir: &Path, keep: 
     }
 }
 
-fn run_archive_diff(idx1: u32, idx2: u32, bak_dir: &Path, tgt_name: &str, keep: bool, quiet: bool, file: Option<String>) {
+fn run_archive_diff(idx1: u32, idx2: u32, bak_dir: &Path, tgt_name: &str, keep: bool, quiet: bool, files: Vec<String>) {
     let tmp1 = tempfile::tempdir().unwrap();
     let tmp2 = tempfile::tempdir().unwrap();
     Archive::new(fs::File::open(bak_dir.join(format!("{:03}{}.tar", idx1, tgt_name))).unwrap()).unpack(tmp1.path()).unwrap();
@@ -479,16 +495,13 @@ fn run_archive_diff(idx1: u32, idx2: u32, bak_dir: &Path, tgt_name: &str, keep: 
 
     let dir1 = tmp1.path().join(tgt_name);
     let dir2 = tmp2.path().join(tgt_name);
-    let mut diff_cmd = Command::new("diff");
-    if quiet {
-        diff_cmd.arg("-q");
-    }
-    if let Some(filename) = file {
-        diff_cmd.arg(dir1.join(&filename)).arg(dir2.join(&filename));
+    if files.is_empty() {
+        run_diff_cmd(quiet, true, &dir1, &dir2);
     } else {
-        diff_cmd.arg("-r").arg(&dir1).arg(&dir2);
+        for filename in &files {
+            run_diff_cmd(quiet, false, &dir1.join(filename), &dir2.join(filename));
+        }
     }
-    let _ = diff_cmd.status();
 
     if keep {
         let dest1 = PathBuf::from("/tmp").join(format!("{}_{:03}", tgt_name, idx1));
